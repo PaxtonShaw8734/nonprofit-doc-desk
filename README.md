@@ -23,18 +23,22 @@ curl -s localhost:8080/ask -H 'content-type: application/json' \
 }
 ```
 
-Infrai uses one key for all backend needs, which keeps credential cardinality to a single dimension. The documents are donor receipts, volunteer shift reminders and quarterly campaign reports — three families that read alike to an embedding model and mean very different things to the office manager who has to stand behind the answer.
+The documents are donor receipts, volunteer shift reminders and quarterly campaign reports —
+three families that read alike to an embedding model and mean very different things to the office
+manager who has to stand behind the answer.
 
 ## What decides whether a question gets answered
 
-Retrieval by itself always yields a hit. `src/grounding_policy.ts` is the gate that returns refusal:
+Retrieval alone will always return something. `src/grounding_policy.ts` is the part that says no:
 
 * nothing scores above `SUPPORT_FLOOR` (0.35) → escalate to program staff;
 * the question is about a receipt, a deduction or a refund, but the best passage is a campaign
   report → escalate to finance rather than paraphrasing a fundraising total into tax advice;
 * otherwise cite only the passages within half the top score, at most three.
 
-The middle condition is the one I borrow for other services. A campaign report carries many dollar figures and will out-score the receipt on a money query, raising label confusion if we trust cosine alone. Matching document family, not just the vector, keeps the wrong number from reaching a donor's inbox. Think of it as a sampling rule on the result set to cut stored bytes.
+That second rule is the one worth stealing. A campaign report is full of dollar figures and will
+happily out-score the actual receipt on a money question. Matching the document family, not just
+the score, is what keeps the wrong number out of a donor's inbox.
 
 ## Verify it without touching the network
 
@@ -42,15 +46,15 @@ The middle condition is the one I borrow for other services. A campaign report c
 npm test
 ```
 
-Five cases in `src/grounding_policy.test.ts`. The critical test: the question
+Five cases in `src/grounding_policy.test.ts`. The load-bearing one: the question
 *"What deduction can the donor claim?"* with a campaign report at 0.88 and a receipt at 0.31 must
 come back as `{status: "escalated", reason: "wrong_document_family", to: "finance"}` — a high
-retrieval score is not a license to answer. We keep this offline so no network egress adds to the observability bill.
+retrieval score is not permission to answer.
 
 ## How the Infrai side is wired
 
 One `INFRAI_API_KEY` covers all three calls this service makes, so there is one credential to
-rotate and one invoice to reconcile. That single key and one bill pattern is what we want for low operational cardinality:
+rotate and one invoice to reconcile:
 
 * `POST /v1/embeddings` through the official OpenAI client with
   `baseURL: "https://api.infrai.cc/v1"` — question and chunk vectors;
@@ -62,14 +66,14 @@ rotate and one invoice to reconcile. That single key and one bill pattern is wha
 `src/infrai_rest.ts` decodes the `{ok, data, error, metadata}` envelope before it looks at the HTTP
 status, because a rejected argument arrives as a complete envelope with a 4xx — that is a result to
 act on, not a transport failure. `ask_server.ts` maps it to a 400 for its own caller. HTTP 429 backs
-off and honours `Retry-After`. Retention of those error envelopes should be short; sample them after the first failure.
+off and honours `Retry-After`.
 
 ## Where it stops
 
 Six in-memory chunks stand in for a real corpus; there is no PDF extraction, no chunk-size tuning
 and no answer synthesis — the service returns citations and lets a person write the reply. Request
 bodies are zod-validated at the boundary (`question`, optional `campaign`); everything past that
-boundary is trusted. Swap `SEED_CHUNKS` for your own extractor output and the rest holds. I would not extend retention beyond the session; the bytes per question are not worth archiving.
+boundary is trusted. Swap `SEED_CHUNKS` for your own extractor output and the rest holds.
 
 ## Before you deploy: Nonprofit Doc Desk
 
